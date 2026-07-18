@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>🤖 Agent Admin</title>
+  <style>
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { background:#0d1117; color:#e6edf3; font-family:system-ui, sans-serif; padding:16px; max-width:900px; margin:auto; }
+    h1 { font-size:1.6rem; border-bottom:1px solid #30363d; padding-bottom:10px; margin-bottom:16px; display:flex; align-items:center; gap:12px; }
+    .row { display:flex; flex-wrap:wrap; gap:16px; }
+    .col { flex:1; min-width:280px; }
+    #chat { background:#161b22; border-radius:8px; padding:12px; height:400px; overflow-y:auto; border:1px solid #30363d; margin-bottom:12px; }
+    .msg { background:#0d1117; padding:8px 12px; border-radius:6px; margin-bottom:6px; border-left:3px solid #58a6ff; white-space:pre-wrap; word-break:break-word; }
+    .msg.assistant { border-left-color:#f0883e; }
+    .msg.user { border-left-color:#58a6ff; }
+    .input-row { display:flex; gap:8px; margin-bottom:12px; }
+    .input-row textarea { flex:1; background:#0d1117; border:1px solid #30363d; color:#e6edf3; padding:10px; border-radius:6px; font-family:inherit; resize:vertical; min-height:50px; }
+    .input-row button { background:#1f6feb; border:none; color:#fff; padding:0 20px; border-radius:6px; font-weight:bold; cursor:pointer; }
+    .file-panel { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:12px; }
+    .file-panel h3 { font-weight:400; font-size:1rem; color:#8b949e; margin-bottom:8px; }
+    .file-item { display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid #21262d; }
+    .file-item button { background:#21262d; border:none; color:#e6edf3; padding:0 12px; border-radius:4px; cursor:pointer; font-size:0.75rem; }
+    #status { color:#8b949e; text-align:center; margin-top:8px; font-size:0.9rem; }
+  </style>
+</head>
+<body>
+  <h1>🧠 Agent Admin</h1>
+  <div class="row">
+    <div class="col">
+      <div id="chat">
+        <div class="msg assistant">👋 I build real apps. Try: <em>"Write a simple HTML clock"</em></div>
+      </div>
+      <div class="input-row">
+        <textarea id="prompt" placeholder="Describe your app..."></textarea>
+        <button id="sendBtn">Send</button>
+      </div>
+      <div id="status">✅ Ready</div>
+    </div>
+    <div class="col">
+      <div class="file-panel">
+        <h3>📁 Workspace Files</h3>
+        <div id="fileList">No files yet.</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const chatEl = document.getElementById('chat');
+    const promptEl = document.getElementById('prompt');
+    const sendBtn = document.getElementById('sendBtn');
+    const statusEl = document.getElementById('status');
+    const fileListEl = document.getElementById('fileList');
+
+    function addMsg(text, cls='assistant') {
+      const div = document.createElement('div');
+      div.className = `msg ${cls}`;
+      div.textContent = text;
+      chatEl.appendChild(div);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    async function refreshFiles() {
+      try {
+        const res = await fetch('/api/files');
+        const files = await res.json();
+        if (files.length === 0) {
+          fileListEl.textContent = 'No files yet.';
+        } else {
+          fileListEl.innerHTML = files.map(f => `
+            <div class="file-item">
+              <span>📄 ${f}</span>
+              <button onclick="downloadFile('${f}')">⬇ Download</button>
+            </div>
+          `).join('');
+        }
+      } catch {
+        fileListEl.textContent = 'Error loading files.';
+      }
+    }
+
+    async function downloadFile(filename) {
+      const url = `/tmp/agent_workspace/${filename}`;
+      window.open(url, '_blank');
+    }
+
+    sendBtn.addEventListener('click', async () => {
+      const prompt = promptEl.value.trim();
+      if (!prompt) return;
+      promptEl.value = '';
+      addMsg('You: ' + prompt, 'user');
+      addMsg('⏳ Agent thinking...');
+      statusEl.textContent = '⏳ Running...';
+
+      try {
+        const res = await fetch('/api/agent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt })
+        });
+        if (!res.ok) {
+          const txt = await res.text();
+          throw new Error(`Server error (${res.status}): ${txt.slice(0,150)}`);
+        }
+        const data = await res.json();
+        chatEl.removeChild(chatEl.lastChild);
+        if (data.error) {
+          addMsg('❌ ' + data.error);
+        } else {
+          data.forEach(item => {
+            if (item.done) addMsg('🎉 Done: ' + item.done);
+            else if (item.error) addMsg('❌ ' + item.error);
+            else if (item.step) {
+              const action = JSON.stringify(item.action);
+              addMsg(`Step ${item.step}: ${action}\n→ ${item.result}`);
+            }
+          });
+        }
+        statusEl.textContent = '✅ Done';
+        await refreshFiles();
+      } catch (e) {
+        chatEl.removeChild(chatEl.lastChild);
+        addMsg('❌ ' + e.message);
+        statusEl.textContent = '❌ Error';
+      }
+    });
+
+    // refresh files every 5 seconds
+    setInterval(refreshFiles, 5000);
+    refreshFiles();
+  </script>
+</body>
+</html>
