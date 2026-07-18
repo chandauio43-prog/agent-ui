@@ -7,27 +7,41 @@ const { Groq } = require('groq-sdk');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// ---------- CONFIG ----------
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
-if (!GROQ_API_KEY) {
-  console.warn('⚠️ GROQ_API_KEY not set. Agent will fail.');
-}
-const client = new Groq({ apiKey: GROQ_API_KEY || 'dummy' });
-
-const WORKSPACE = path.join('/tmp', 'agent_workspace');
-const MAX_ITERATIONS = 10;
-const ALLOW_DELETE = false;
-const ALLOW_RUN = false;
-
-// Ensure workspace exists
-fs.mkdir(WORKSPACE, { recursive: true }).catch(console.error);
+// ---------- LOGGING ----------
+console.log('Starting server...');
+console.log('PORT:', PORT);
+console.log('GROQ_API_KEY set?', !!process.env.GROQ_API_KEY);
 
 // ---------- MIDDLEWARE ----------
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
-app.use(express.static(__dirname)); // serve admin.html
+app.use(express.static(__dirname));
 
-// ---------- TOOLS (real file ops) ----------
+// ---------- HEALTH CHECK ----------
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', time: new Date().toISOString() });
+});
+
+// ---------- GROQ CLIENT ----------
+let client = null;
+try {
+  if (process.env.GROQ_API_KEY) {
+    client = new Groq({ apiKey: process.env.GROQ_API_KEY });
+    console.log('✅ Groq client initialized');
+  } else {
+    console.warn('⚠️ GROQ_API_KEY not set. Agent will fail.');
+  }
+} catch (err) {
+  console.error('❌ Failed to initialize Groq client:', err.message);
+}
+
+const WORKSPACE = '/tmp/agent_workspace';
+const MAX_ITERATIONS = 10;
+
+// Ensure workspace exists
+fs.mkdir(WORKSPACE, { recursive: true }).catch(console.error);
+
+// ---------- TOOLS ----------
 const tools = {
   write_file: async (pathname, content) => {
     const full = path.join(WORKSPACE, pathname);
@@ -40,15 +54,13 @@ const tools = {
     try {
       const content = await fs.readFile(full, 'utf-8');
       return content.slice(0, 2000);
-    } catch (e) {
+    } catch {
       return `File not found: ${pathname}`;
     }
   },
   delete_file: async (pathname) => {
-    if (!ALLOW_DELETE) return 'Deletion disabled';
-    const full = path.join(WORKSPACE, pathname);
-    await fs.rm(full, { recursive: true, force: true });
-    return `Deleted ${pathname}`;
+    // disabled for safety
+    return 'Deletion disabled';
   },
   list_files: async () => {
     try {
@@ -59,16 +71,14 @@ const tools = {
     }
   },
   run_command: (cmd) => {
-    if (!ALLOW_RUN) return 'Command execution disabled';
-    // We'll implement if needed later
-    return `Would run: ${cmd}`;
+    return 'Command execution disabled';
   }
 };
 
 // ---------- AGENT LOOP ----------
 async function* agentLoop(prompt) {
-  if (!GROQ_API_KEY) {
-    yield { error: 'GROQ_API_KEY not set in environment.' };
+  if (!client) {
+    yield { error: 'GROQ_API_KEY not set. Please set it in environment variables.' };
     return;
   }
 
@@ -140,7 +150,7 @@ app.post('/api/agent', async (req, res) => {
   for await (const chunk of agentLoop(prompt)) {
     results.push(chunk);
   }
-  res.json(rresults);
+  res.json(results);
 });
 
 app.get('/api/files', async (req, res) => {
@@ -154,7 +164,7 @@ app.get('/api/files', async (req, res) => {
     res.json(fileList);
   } catch {
     res.json([]);
- }
+  }
 });
 
 // Serve admin.html
@@ -163,7 +173,7 @@ app.get('/', (req, res) => {
 });
 
 // ---------- START ----------
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📁 Workspace: ${WORKSPACE}`);
 });
