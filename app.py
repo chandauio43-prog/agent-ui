@@ -1,4 +1,8 @@
 import os
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+if not GROQ_API_KEY:
+    print("⚠️ WARNING: GROQ_API_KEY not set. The agent will fail on API calls.")
+    GROQ_API_KEY = ""  # placeholder to avoid crash
 import json
 import subprocess
 import shutil
@@ -10,9 +14,6 @@ app = Flask(__name__)
 CORS(app)  # allows your frontend to call it (if separate)
 
 # ---------- CONFIG ----------
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-if not GROQ_API_KEY:
-    raise ValueError("Set GROQ_API_KEY environment variable")
 
 client = Groq(api_key=GROQ_API_KEY)
 WORKSPACE = "/tmp/agent_workspace"
