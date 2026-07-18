@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🤖 Real AI Agent (Browser)</title>
+  <style>
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { background:#0d1117; color:#e6edf3; font-family:system-ui, sans-serif; padding:16px; max-width:700px; margin:auto; }
+    h1 { font-size:1.5rem; border-bottom:1px solid #30363d; padding-bottom:10px; margin-bottom:16px; display:flex; align-items:center; gap:10px; }
+    .config { background:#161b22; padding:12px; border-radius:8px; margin-bottom:16px; display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+    .config input, .config select { background:#0d1117; border:1px solid #30363d; color:#e6edf3; padding:8px; border-radius:6px; flex:1; min-width:100px; }
+    .config button { background:#238636; border:none; color:#fff; padding:8px 16px; border-radius:6px; font-weight:bold; cursor:pointer; }
+    #chat { background:#161b22; border-radius:8px; padding:12px; height:450px; overflow-y:auto; margin-bottom:12px; border:1px solid #30363d; }
+    .msg { background:#0d1117; padding:10px 14px; border-radius:8px; margin-bottom:8px; border-left:3px solid #58a6ff; white-space:pre-wrap; word-break:break-word; font-size:0.9rem; }
+    .msg.assistant { border-left-color:#f0883e; }
+    .msg.user { border-left-color:#58a6ff; }
+    .input-row { display:flex; gap:10px; }
+    .input-row textarea { flex:1; background:#0d1117; border:1px solid #30363d; color:#e6edf3; padding:10px; border-radius:8px; font-family:inherit; min-height:60px; resize:vertical; }
+    .input-row button { background:#1f6feb; border:none; color:#fff; padding:0 24px; border-radius:8px; font-weight:bold; cursor:pointer; }
+    .file-panel { margin-top:12px; background:#161b22; padding:10px; border-radius:8px; border:1px solid #30363d; }
+    .file-panel span { color:#8b949e; font-size:0.85rem; }
+    #status { color:#8b949e; font-size:0.8rem; text-align:center; margin-top:8px; }
+  </style>
+</head>
+<body>
+  <h1>📱 Real Agent (HTML)</h1>
+  <div class="config">
+    <input type="text" id="apiKey" placeholder="Groq API Key (gsk_...)" style="flex:2;">
+    <select id="model"><option value="llama-3.3-70b-versatile">Llama 3.3 70B</option></select>
+    <button id="saveBtn">Save</button>
+  </div>
+  <div id="chat"><div class="msg assistant">👋 I build real apps. Try: <em>"Write a simple HTML clock with CSS"</em></div></div>
+  <div class="input-row">
+    <textarea id="prompt" placeholder="Describe your app..."></textarea>
+    <button id="sendBtn">Send</button>
+  </div>
+  <div class="file-panel">
+    <strong>📁 Virtual Workspace:</strong> <span id="fileList">No files yet.</span>
+  </div>
+  <div id="status">✅ Ready</div>
+
+  <script>
+    const PROXY = "https://corsproxy.io/?";
+    const chatEl = document.getElementById('chat');
+    const promptEl = document.getElementById('prompt');
+    const sendBtn = document.getElementById('sendBtn');
+    const fileListEl = document.getElementById('fileList');
+    const statusEl = document.getElementById('status');
+    const apiKeyInput = document.getElementById('apiKey');
+    const saveBtn = document.getElementById('saveBtn');
+
+    const vfs = {};
+
+    function updateFileList() {
+      const keys = Object.keys(vfs);
+      fileListEl.textContent = keys.length ? keys.join(', ') : 'No files yet.';
+    }
+
+    function writeFile(path, content) {
+      vfs[path] = content;
+      updateFileList();
+      return `✅ Wrote ${path} (${content.length} chars)`;
+    }
+    function readFile(path) {
+      if (vfs[path]) return `📄 ${path}:\n\`\`\`\n${vfs[path].slice(0,1000)}\n\`\`\``;
+      return `❌ File not found: ${path}`;
+    }
+    function deleteFile(path) {
+      if (vfs[path]) { delete vfs[path]; updateFileList(); return `🗑️ Deleted ${path}`; }
+      return `❌ File not found: ${path}`;
+    }
+    function listFiles() {
+      const keys = Object.keys(vfs);
+      return keys.length ? `📁 Files:\n${keys.map(f => `- ${f}`).join('\n')}` : '📁 No files.';
+    }
+    function runCommand(cmd) {
+      return `🖥️ Would run: ${cmd}\n(You copy/paste this manually into Termux/Shell.)`;
+    }
+
+    const tools = {
+      write_file: writeFile,
+      read_file: readFile,
+      delete_file: deleteFile,
+      list_files: listFiles,
+      run_command: runCommand
+    };
+
+    async function callGroq(messages) {
+      const key = apiKeyInput.value.trim();
+      if (!key) throw new Error('Please set your Groq API key');
+      const url = 'https://api.groq.com/openai/v1/chat/completions';
+      const payload = {
+        model: 'llama-3.3-70b-versatile',
+        messages: messages,
+        temperature: 0.3,
+        response_format: { type: "json_object" }
+      };
+      const resp = await fetch(PROXY + url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+        body: JSON.stringify(payload)
+      });
+      if (!resp.ok) {
+        const err = await resp.text();
+        throw new Error(`API error (${resp.status}): ${err.slice(0,150)}`);
+      }
+      const data = await resp.json();
+      return data.choices[0].message.content;
+    }
+
+    async function runAgent(prompt) {
+      const history = [
+        { role: 'system', content: `
+You are an autonomous developer inside a browser.
+Available tools: write_file, read_file, delete_file, list_files, run_command.
+OUTPUT VALID JSON ONLY. Example: {"tool":"write_file","path":"index.html","content":"<html>..."}
+When the app is complete: {"done":"App is ready! Open index.html in your browser."}
+        ` },
+        { role: 'user', content: prompt }
+      ];
+
+      let results = [];
+      for (let i = 0; i < 10; i++) {
+        try {
+          const raw = await callGroq(history);
+          const action = JSON.parse(raw);
+
+          if (action.done) {
+            results.push(`🎉 **DONE**: ${action.done}`);
+            break;
+          }
+
+          const tool = action.tool;
+          if (!tools[tool]) {
+            results.push(`❌ Unknown tool: ${tool}`);
+            break;
+          }
+
+          let result;
+          if (tool === 'write_file') result = tools[tool](action.path, action.content);
+          else if (tool === 'run_command') result = tools[tool](action.cmd);
+          else result = tools[tool](action.path || '.');
+
+          const stepMsg = `**Step ${i+1}** → \`${JSON.stringify(action)}\`\n📌 ${result}`;
+          results.push(stepMsg);
+
+          history.push({ role: 'assistant', content: raw });
+          history.push({ role: 'user', content: `Result: ${result}` });
+        } catch (e) {
+          results.push(`❌ Error: ${e.message}`);
+          break;
+        }
+      }
+      return results.join('\n\n');
+    }
+
+    function addMsg(text, cls='assistant') {
+      const div = document.createElement('div');
+      div.className = `msg ${cls}`;
+      div.textContent = text;
+      chatEl.appendChild(div);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    sendBtn.addEventListener('click', async () => {
+      const prompt = promptEl.value.trim();
+      if (!prompt) return;
+      promptEl.value = '';
+      addMsg('You: ' + prompt, 'user');
+      addMsg('⏳ Agent thinking...');
+      statusEl.textContent = '⏳ Running...';
+
+      try {
+        const response = await runAgent(prompt);
+        chatEl.removeChild(chatEl.lastChild);
+        const steps = response.split('\n\n');
+        steps.forEach(step => {
+          if (step.trim()) addMsg(step.trim(), 'assistant');
+        });
+        statusEl.textContent = '✅ Done';
+      } catch (e) {
+        chatEl.removeChild(chatEl.lastChild);
+        addMsg('❌ ' + e.message);
+        statusEl.textContent = '❌ Error';
+      }
+    });
+
+    saveBtn.addEventListener('click', () => {
+      const key = apiKeyInput.value.trim();
+      localStorage.setItem('groq_key', key);
+      statusEl.textContent = '✅ API key saved locally';
+    });
+
+    const saved = localStorage.getItem('groq_key');
+    if (saved) apiKeyInput.value = saved;
+  </script>
+</body>
+</html>
